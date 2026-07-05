@@ -1,106 +1,157 @@
-﻿import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { useRobotStore } from '../store/useRobotStore';
 
-// Get env variables
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-// Create client conditionally so it doesn't crash if env vars are missing
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
 export const useAnalytics = () => {
   const { setVisitorCount } = useRobotStore();
-  const [isOnline, setIsOnline] = useState(true);
+  const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
+  const [isOnline, setIsOnline] = useState(!!supabase);
+
+  const trackingRan = useRef(false);
 
   useEffect(() => {
     let mounted = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
     const trackVisitor = async () => {
       if (!supabase) {
-        console.warn('Supabase not configured. Analytics disabled.');
+        setStatus('error');
+        setIsOnline(false);
         return;
       }
 
-      try {
-        const lastVisitStr = localStorage.getItem('last_visit');
-        const now = Date.now();
-        const ONE_DAY = 24 * 60 * 60 * 1000;
+      let vid = localStorage.getItem('ai_visitor_id');
+      if (!vid) {
+        vid = 'vid_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        localStorage.setItem('ai_visitor_id', vid);
+      }
 
-        let shouldIncrement = false;
+      const { data: existing, error: selectError } = await supabase
+        .from('visitors')
+        .select('last_visit, visit_count')
+        .eq('visitor_id', vid)
+        .maybeSingle();
 
-        if (!lastVisitStr) {
-          shouldIncrement = true;
-        } else {
-          const lastVisit = parseInt(lastVisitStr, 10);
-          if (now - lastVisit > ONE_DAY) {
-            shouldIncrement = true;
-          }
-        }
+      if (selectError) {
+        throw selectError;
+      }
 
-        if (shouldIncrement) {
-          // Increment in Supabase using an RPC or just fetching and updating
-          // Note: for a robust counter, use a postgres function:
-          // CREATE OR REPLACE FUNCTION increment_visitor() RETURNS void AS \$\$
-          // BEGIN UPDATE visitors SET count = count + 1 WHERE id = 1; END; \$\$ LANGUAGE plpgsql;
-          
-          const { error } = await supabase.rpc('increment_visitor');
-          
-          if (!error) {
-            localStorage.setItem('last_visit', now.toString());
-          }
-        }
+      const now = Date.now();
+      const ONE_DAY = 24 * 60 * 60 * 1000;
 
-        // Fetch current count
-        const { data, error: fetchError } = await supabase
+      if (!existing) {
+        const { error: insertError } = await supabase
           .from('visitors')
-          .select('count')
-          .eq('id', 1)
-          .single();
-
-        if (!fetchError && data && mounted) {
-          setVisitorCount(data.count);
+          .insert({
+            visitor_id: vid,
+            first_visit: new Date().toISOString(),
+            last_visit: new Date().toISOString(),
+            visit_count: 1,
+            user_agent: navigator.userAgent
+          });
+        if (insertError) throw insertError;
+      } else {
+        const lastVisitTime = new Date(existing.last_visit).getTime();
+        if (now - lastVisitTime > ONE_DAY) {
+          const { error: updateError } = await supabase
+            .from('visitors')
+            .update({
+              last_visit: new Date().toISOString(),
+              visit_count: (existing.visit_count || 1) + 1,
+              user_agent: navigator.userAgent
+            })
+            .eq('visitor_id', vid);
+          if (updateError) throw updateError;
         }
-      } catch (err) {
-        console.error('Analytics Error:', err);
+      }
+
+      const { data: countData, error: sumError } = await supabase
+        .from('visitors')
+        .select('visit_count');
+
+      if (sumError) {
+        throw sumError;
+      }
+
+      if (countData && mounted) {
+        const total = countData.reduce((acc, row) => acc + (row.visit_count || 1), 0);
+        setVisitorCount(total);
+        setStatus('success');
+        setIsOnline(true);
       }
     };
 
-    trackVisitor();
+    const runTrackingFlow = async () => {
+      if (!mounted) return;
+      if (trackingRan.current) {
+        return;
+      }
+      setStatus('loading');
+      try {
+        await trackVisitor();
+        trackingRan.current = true;
+      } catch (err) {
+        console.error('Visitor Analytics Tracking Error:', err);
+        if (mounted) {
+          setStatus('error');
+          timer = setTimeout(runTrackingFlow, 30000);
+        }
+      }
+    };
 
-    // Subscribe to realtime updates
-    let channel: any = null;
-    
-    if (supabase) {
-      channel = supabase
-        .channel('schema-db-changes')
-        .on(
-          'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'visitors',
-          },
-          (payload) => {
-            if (mounted && payload.new && typeof payload.new.count === 'number') {
-              setVisitorCount(payload.new.count);
-            }
-          }
-        )
-        .subscribe();
-    }
-
-    // Ping mechanism for "Online Status" (using simple local state for demo, or Presence)
-    // For now we just say online if supabase connected.
-    setIsOnline(!!supabase);
+    runTrackingFlow();
 
     return () => {
       mounted = false;
-      if (channel) {
-        supabase?.removeChannel(channel);
-      }
+      if (timer) clearTimeout(timer);
     };
   }, [setVisitorCount]);
 
-  return { isOnline };
+  useEffect(() => {
+    if (!supabase || status !== 'success') return;
+
+    let mounted = true;
+    const channel = supabase
+      .channel('schema-db-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'visitors',
+        },
+        (payload) => {
+          if (!mounted) return;
+          
+          const store = useRobotStore.getState();
+          const currentCount = store.visitorCount;
+
+          if (payload.eventType === 'INSERT') {
+            setVisitorCount(currentCount + 1);
+          } else if (payload.eventType === 'UPDATE') {
+            if (payload.old && payload.new && typeof payload.new.visit_count === 'number' && typeof payload.old.visit_count === 'number') {
+              const diff = payload.new.visit_count - payload.old.visit_count;
+              if (diff > 0) {
+                setVisitorCount(currentCount + diff);
+              }
+            } else {
+              setVisitorCount(currentCount + 1);
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      mounted = false;
+      supabase.removeChannel(channel);
+    };
+  }, [status, setVisitorCount]);
+
+  return { isOnline, status };
 };

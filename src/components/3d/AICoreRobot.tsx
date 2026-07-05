@@ -86,18 +86,37 @@ const EngineTrails = ({ velocity }: { velocity: THREE.Vector3 }) => {
 
 const VisitorHologram = () => {
   const { visitorCount } = useRobotStore();
-  const { isOnline } = useAnalytics();
+  const { isOnline, status } = useAnalytics();
   
-  // Calculate deterministic metrics for the tooltip to fake advanced analytics
+  const [pulseKey, setPulseKey] = useState(0);
+  useEffect(() => {
+    if (visitorCount > 0) {
+      setPulseKey(prev => prev + 1);
+    }
+  }, [visitorCount]);
+
+  const width = typeof window !== 'undefined' ? window.innerWidth : 1024;
+  const isMobile = width < 768;
+
   const today = Math.max(1, Math.floor(visitorCount * 0.05));
   const activeNow = Math.max(1, Math.floor(visitorCount * 0.002));
 
   return (
-    <Html position={[1.2, 0.5, 0]} center zIndexRange={[80, 0]}>
+    <Html position={isMobile ? [0, -1.5, 0] : [1.2, 0.5, 0]} center zIndexRange={[80, 0]}>
       <motion.div 
-        initial={{ opacity: 0, scale: 0.5, x: -20 }}
-        animate={{ opacity: 1, scale: 1, x: 0 }}
-        className="group relative"
+        key={pulseKey}
+        initial={{ opacity: 0, scale: 0.5, y: isMobile ? 10 : 0, x: isMobile ? 0 : -20 }}
+        animate={{ 
+          opacity: 1, 
+          scale: [1, 1.15, 1],
+          x: 0,
+          y: 0
+        }}
+        transition={{ 
+          scale: { duration: 0.3, ease: "easeInOut" },
+          default: { duration: 0.5 }
+        }}
+        className="group relative select-none"
       >
         {/* Hologram Monitor Panel */}
         <div className="flex items-center gap-3 bg-black/60 backdrop-blur-md border border-[#00E5FF]/40 rounded-[14px] p-2 shadow-[0_0_20px_rgba(0,229,255,0.2)] overflow-hidden relative">
@@ -109,15 +128,17 @@ const VisitorHologram = () => {
             <Users className="w-4 h-4" />
           </div>
           
-          <div className="flex flex-col pr-2">
+          <div className="flex flex-col pr-2 min-w-[70px]">
             <span className="text-[10px] font-bold tracking-widest text-[#00E5FF]/70 uppercase leading-none mb-1">
               Visitors
             </span>
             <div className="flex items-center gap-2">
               <span className="text-white font-mono font-bold text-sm tracking-wider tabular-nums leading-none">
-                {visitorCount.toLocaleString()}
+                {status === 'loading' && 'Loading...'}
+                {status === 'error' && 'Unavailable'}
+                {status === 'success' && visitorCount.toLocaleString()}
               </span>
-              {isOnline && (
+              {isOnline && status === 'success' && (
                 <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.8)]" />
               )}
             </div>
@@ -125,22 +146,24 @@ const VisitorHologram = () => {
         </div>
 
         {/* Hover Tooltip (Advanced Metrics) */}
-        <div className="absolute top-full left-1/2 -translate-x-1/2 pt-3 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
-          <div className="bg-black/80 backdrop-blur-xl border border-white/10 rounded-xl p-3 shadow-2xl w-40 flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted">Today</span>
-              <span className="text-xs font-bold text-white tabular-nums">+{today}</span>
-            </div>
-            <div className="h-px w-full bg-white/10" />
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted">Active Now</span>
-              <div className="flex items-center gap-1.5">
-                <Activity className="w-3 h-3 text-green-400" />
-                <span className="text-xs font-bold text-white tabular-nums">{activeNow}</span>
+        {status === 'success' && (
+          <div className="absolute top-full left-1/2 -translate-x-1/2 pt-3 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
+            <div className="bg-black/80 backdrop-blur-xl border border-white/10 rounded-xl p-3 shadow-2xl w-40 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted">Today</span>
+                <span className="text-xs font-bold text-white tabular-nums">+{today}</span>
+              </div>
+              <div className="h-px w-full bg-white/10" />
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted">Active Now</span>
+                <div className="flex items-center gap-1.5">
+                  <Activity className="w-3 h-3 text-green-400" />
+                  <span className="text-xs font-bold text-white tabular-nums">{activeNow}</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
       </motion.div>
     </Html>
   );
