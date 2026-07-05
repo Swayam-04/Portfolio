@@ -83,7 +83,8 @@ export const useRobotStore = create<RobotStore>((set) => ({
     return { 
       activeSection: section,
       speechRequestId: state.speechRequestId + 1,
-      bubbleVisible: false
+      bubbleVisible: false,
+      followGuide: true
     };
   }),
   
@@ -117,7 +118,8 @@ export const useRobotStore = create<RobotStore>((set) => ({
       scrollLock: true,
       activeSection: section,
       bubbleVisible: false, // Instantly hide bubble when moving starts
-      speechRequestId: state.speechRequestId + 1
+      speechRequestId: state.speechRequestId + 1,
+      followGuide: true
     }));
     
     // Unlock scrolling after robot likely arrives

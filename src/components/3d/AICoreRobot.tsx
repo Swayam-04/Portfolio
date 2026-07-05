@@ -239,6 +239,14 @@ export const AICoreRobot = () => {
       localStorage.setItem('ai-guide-pos', JSON.stringify(dragScreenPositionRef.current));
 
       if (!isTouchDevice) document.body.style.cursor = 'grab';
+
+      // Start 10-second auto-resume timer
+      if ((window as any)._aiGuideResumeTimeout) {
+        clearTimeout((window as any)._aiGuideResumeTimeout);
+      }
+      (window as any)._aiGuideResumeTimeout = setTimeout(() => {
+        useRobotStore.getState().setFollowGuide(true);
+      }, 10000);
     };
 
     window.addEventListener('pointermove', handlePointerMove, { passive: false });
@@ -465,13 +473,13 @@ export const AICoreRobot = () => {
     const targetScale = activeSection === 'hero' ? baseScale : shrinkScale;
     const dragScaleMultiplier = isDragging ? 1.05 : 1.0;
 
-    // Update position instantly during drag, and apply 150-200ms ease-out (lerp factor 0.18) upon release
+    // Update position instantly during drag, and apply 120ms ease-out (lerp factor 0.26) upon release
     if (isDragging) {
       groupRef.current.position.x = dragPositionRef.current.x;
       groupRef.current.position.y = dragPositionRef.current.y;
     } else {
-      groupRef.current.position.x = THREE.MathUtils.lerp(groupRef.current.position.x, targetX, 0.18);
-      groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, targetY, 0.18);
+      groupRef.current.position.x = THREE.MathUtils.lerp(groupRef.current.position.x, targetX, 0.26);
+      groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, targetY, 0.26);
     }
     
     groupRef.current.scale.setScalar(THREE.MathUtils.lerp(groupRef.current.scale.x, targetScale * dragScaleMultiplier, 0.15));
@@ -556,7 +564,13 @@ export const AICoreRobot = () => {
     e.stopPropagation();
     incrementClick();
     
+    if ((window as any)._aiGuideResumeTimeout) {
+      clearTimeout((window as any)._aiGuideResumeTimeout);
+    }
+    
     const store = useRobotStore.getState();
+    store.setFollowGuide(true);
+
     if (store.bubbleVisible) {
       store.hideBubble();
     } else {
