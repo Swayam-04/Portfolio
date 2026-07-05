@@ -147,7 +147,7 @@ const VisitorHologram = () => {
 };
 
 export const AICoreRobot = () => {
-  const { hoverState, activeSection, clickCount, isBooting, setBooting, incrementClick, activeMilestone, onRobotArrived } = useRobotStore();
+  const { hoverState, activeSection, clickCount, isBooting, setBooting, incrementClick, activeMilestone, onRobotArrived, scrollLock } = useRobotStore();
   
   const groupRef = useRef<THREE.Group>(null);
   const idleGroupRef = useRef<THREE.Group>(null);
@@ -180,6 +180,17 @@ export const AICoreRobot = () => {
     }
   }, [isBooting, setBooting]);
 
+  // Track if page has scrolled past hero top area for mobile position transition
+  const [hasScrolled, setHasScrolled] = useState(false);
+  useEffect(() => {
+    const handleScroll = () => {
+      setHasScrolled(window.scrollY > 50);
+    };
+    handleScroll();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
   // Section Color mapping
   const getChestColor = () => {
     switch(activeSection) {
@@ -194,10 +205,12 @@ export const AICoreRobot = () => {
     }
   };
 
-  // React Spring Physics for smooth posture transitions
+  const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+
+  // React Spring Physics for smooth posture transitions (Disable scale-up hover on touch screens)
   const { chestColor, scale } = useSpring({
     chestColor: activeMilestone ? '#FFD700' : getChestColor(),
-    scale: hoverState !== 'none' ? 1.1 : 1,
+    scale: (hoverState !== 'none' && !isTouchDevice) ? 1.1 : 1,
     config: { mass: 2, tension: 150, friction: 20 }
   });
 
@@ -211,16 +224,21 @@ export const AICoreRobot = () => {
       return;
     }
 
-    // Level 1: Idle System
-    const idleY = Math.sin(time * 2) * 0.1;
-    const idleSway = Math.sin(time * 1) * 0.05;
+    const width = window.innerWidth;
+    const isMobile = width < 768;
+    const isTablet = width >= 768 && width < 1024;
+
+    // Level 1: Idle System (Reduce amplitude on mobile to optimize performance and prevent distracting motion)
+    const idleAmplitude = isMobile ? 0.04 : 0.1;
+    const idleY = Math.sin(time * 1.5) * idleAmplitude;
+    const idleSway = Math.sin(time * 1) * (isMobile ? 0.02 : 0.05);
     
     // Easter Egg: 360 Spin on Double Click (Level 12)
     const spinTarget = (clickCount % 2 === 0 && clickCount > 0) ? Math.PI * 2 : 0;
 
-    // Level 2: Cursor Tracking (Smooth Interpolation)
-    const targetRotY = (pointer.x * 0.8) + idleSway + spinTarget;
-    const targetRotX = -(pointer.y * 0.8);
+    // Level 2: Cursor Tracking (Smooth Interpolation - Disable on mobile/touch screens)
+    const targetRotY = isMobile ? idleSway + spinTarget : (pointer.x * 0.8) + idleSway + spinTarget;
+    const targetRotX = isMobile ? 0 : -(pointer.y * 0.8);
     
     headRef.current.rotation.y = THREE.MathUtils.lerp(headRef.current.rotation.y, targetRotY, 0.1);
     headRef.current.rotation.x = THREE.MathUtils.lerp(headRef.current.rotation.x, targetRotX, 0.1);
@@ -233,22 +251,22 @@ export const AICoreRobot = () => {
     chestRef.current.scale.set(breath, breath, breath);
     
     // Spin faster when interacting or celebrating
-    if (hoverState !== 'none' || activeMilestone) {
+    if ((hoverState !== 'none' && !isTouchDevice) || activeMilestone) {
       chestRef.current.rotation.y += 0.1;
     } else {
       chestRef.current.rotation.y += 0.02;
     }
 
-    // Smart IK Gestures based on hover state
+    // Smart IK Gestures based on hover state (Keep disabled on touch screens)
     let targetRightArmZ = 0;
     let targetRightArmX = 0;
     let targetHeadNod = 0;
 
-    if (hoverState !== 'none' && hoverState !== 'resume' && hoverState !== 'contact') {
+    if (hoverState !== 'none' && hoverState !== 'resume' && hoverState !== 'contact' && !isTouchDevice) {
       targetRightArmX = -Math.PI / 2;
-    } else if (hoverState === 'contact') {
+    } else if (hoverState === 'contact' && !isTouchDevice) {
       targetRightArmZ = Math.sin(time * 10) * 0.5 - 1; 
-    } else if (hoverState === 'resume') {
+    } else if (hoverState === 'resume' && !isTouchDevice) {
       targetHeadNod = Math.sin(time * 10) * 0.2; 
     }
 
@@ -258,17 +276,30 @@ export const AICoreRobot = () => {
     }
     headRef.current.rotation.x += targetHeadNod;
 
-    // Strict Edge Positioning
+    // Strict Responsive Positioning
     let targetX = 0;
     let targetY = 0;
-    const isMobile = viewport.width < 5;
-    const offset = isMobile ? 1.5 : 1.8;
+    
+    const offset = isMobile ? 1.0 : (isTablet ? 1.4 : 1.8);
     const rightEdge = (viewport.width / 2) - offset;
     const leftEdge = -(viewport.width / 2) + offset;
 
     if (isMobile) {
-      targetX = rightEdge;
-      targetY = -(viewport.height / 2) + 2;
+      if (activeSection === 'hero' && !hasScrolled) {
+        // Center-bottom in Hero section
+        targetX = 0;
+        targetY = -(viewport.height / 2) + 1.2;
+      } else {
+        // Bottom right corner
+        targetX = rightEdge;
+        targetY = -(viewport.height / 2) + 1.0;
+        
+        // ScollLock nudge - gently floats slightly left/up when heading clicked
+        if (scrollLock) {
+          targetX -= 0.4;
+          targetY += 0.4;
+        }
+      }
     } else {
       targetY = 0; 
       switch (activeSection) {
@@ -281,9 +312,18 @@ export const AICoreRobot = () => {
       }
     }
 
-    // Calculate Scale (Hero is large, rest are small)
-    const baseScale = isMobile ? 0.7 : 1.0;
-    const shrinkScale = 0.48; // Scale for non-hero sections
+    // Calculate responsive scaling
+    let baseScale = 1.0;
+    let shrinkScale = 0.48;
+
+    if (isMobile) {
+      baseScale = 0.45; // ~45% size in hero
+      shrinkScale = 0.192; // ~40% of desktop guide size (0.48)
+    } else if (isTablet) {
+      baseScale = 0.65;
+      shrinkScale = 0.312; // ~65% of desktop guide size (0.48)
+    }
+
     const targetScale = activeSection === 'hero' ? baseScale : shrinkScale;
     
     // Strict lerp for base position (no idleY)
@@ -314,13 +354,11 @@ export const AICoreRobot = () => {
     const dist = Math.hypot(targetX - groupRef.current.position.x, targetY - groupRef.current.position.y);
     const state = useRobotStore.getState();
     
-    // We arrived if distance is very small AND we haven't processed this specific speech request yet
     if (dist <= 0.1 && lastProcessedSpeechRequest.current !== state.speechRequestId) {
       lastProcessedSpeechRequest.current = state.speechRequestId;
       console.log(`[STAGE 4] Robot Arrived at section: ${state.activeSection}`);
       onRobotArrived(state.activeSection);
     } else if (dist > 0.1 && lastProcessedSpeechRequest.current !== state.speechRequestId) {
-      // Just a helpful log, we don't need to track `isMoving` boolean anymore
       if (Math.random() < 0.05) console.log(`[STAGE 3] Robot Moving to section: ${state.activeSection}`);
     }
   });
@@ -337,6 +375,19 @@ export const AICoreRobot = () => {
     e.stopPropagation();
   };
 
+  const handleClick = (e: any) => {
+    e.stopPropagation();
+    incrementClick();
+    
+    // Toggle bubble visibility on tap/click
+    const store = useRobotStore.getState();
+    if (store.bubbleVisible) {
+      store.hideBubble();
+    } else {
+      store.onRobotArrived(store.activeSection);
+    }
+  };
+
   return (
     <>
       <animated.group 
@@ -346,9 +397,9 @@ export const AICoreRobot = () => {
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
         onDoubleClick={handleDoubleClick}
-        onClick={() => incrementClick()}
-        onPointerOver={() => document.body.style.cursor = 'pointer'}
-        onPointerOut={() => document.body.style.cursor = 'auto'}
+        onClick={handleClick}
+        onPointerOver={() => { if (!isTouchDevice) document.body.style.cursor = 'pointer'; }}
+        onPointerOut={() => { if (!isTouchDevice) document.body.style.cursor = 'auto'; }}
       >
         <ambientLight intensity={1.8} />
         <directionalLight position={[10, 10, 5]} intensity={3.5} color="#FFFFFF" />
