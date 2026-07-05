@@ -172,6 +172,8 @@ export const AICoreRobot = () => {
   // Dragging local state
   const [isDragging, setIsDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
+  const dragPositionRef = useRef({ x: 0, y: 0 });
+  const dragScreenPositionRef = useRef({ x: 0, y: 0 });
 
   const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
 
@@ -184,6 +186,7 @@ export const AICoreRobot = () => {
         if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
           setCustomPosition(parsed);
           setFollowGuide(false);
+          dragScreenPositionRef.current = parsed;
         }
       } catch (e) {
         console.error("Failed to parse saved robot position", e);
@@ -217,13 +220,12 @@ export const AICoreRobot = () => {
       const clampedX = Math.max(-(viewport.width / 2) + marginX, Math.min((viewport.width / 2) - marginX, worldX));
       const clampedY = Math.max(-(viewport.height / 2) + marginY, Math.min((viewport.height / 2) - marginY, worldY));
 
-      // Calculate screen pixel coordinates to save to localStorage
+      // Store positions in refs instantly to prevent laggy React state updates during drag
+      dragPositionRef.current = { x: clampedX, y: clampedY };
+
       const screenX = ((clampedX / (viewport.width / 2)) + 1) / 2 * width;
       const screenY = (-(clampedY / (viewport.height / 2)) + 1) / 2 * height;
-
-      const newPos = { x: screenX, y: screenY };
-      setCustomPosition(newPos);
-      localStorage.setItem('ai-guide-pos', JSON.stringify(newPos));
+      dragScreenPositionRef.current = { x: screenX, y: screenY };
 
       if (e.cancelable) {
         e.preventDefault();
@@ -232,6 +234,11 @@ export const AICoreRobot = () => {
 
     const handlePointerUp = () => {
       setIsDragging(false);
+      
+      // Save position to Zustand store and localStorage ONLY on drag release
+      setCustomPosition(dragScreenPositionRef.current);
+      localStorage.setItem('ai-guide-pos', JSON.stringify(dragScreenPositionRef.current));
+
       if (!isTouchDevice) document.body.style.cursor = 'grab';
     };
 
@@ -360,14 +367,14 @@ export const AICoreRobot = () => {
     const isMobile = width < 768;
     const isTablet = width >= 768 && width < 1024;
 
-    // Idle amplitude - reduce on mobile/drag
-    const idleAmplitude = (isMobile || isDragging) ? 0.02 : 0.1;
+    // Idle amplitude - temporarily pause floating and head sway during dragging
+    const idleAmplitude = isDragging ? 0 : (isMobile ? 0.04 : 0.1);
     const idleY = Math.sin(time * 1.5) * idleAmplitude;
-    const idleSway = Math.sin(time * 1) * ((isMobile || isDragging) ? 0.01 : 0.05);
+    const idleSway = isDragging ? 0 : (Math.sin(time * 1) * (isMobile ? 0.02 : 0.05));
     
     const spinTarget = (clickCount % 2 === 0 && clickCount > 0) ? Math.PI * 2 : 0;
 
-    // Head tracking - disable on mobile or during drag
+    // Head tracking - disable on mobile or during drag (forces head straight ahead during drag)
     const targetRotY = (isMobile || isDragging) ? idleSway + spinTarget : (pointer.x * 0.8) + idleSway + spinTarget;
     const targetRotX = (isMobile || isDragging) ? 0 : -(pointer.y * 0.8);
     
@@ -378,7 +385,10 @@ export const AICoreRobot = () => {
     const breath = 1 + Math.sin(time * 3) * 0.02;
     chestRef.current.scale.set(breath, breath, breath);
     
-    if (((hoverState !== 'none' && !isTouchDevice) || activeMilestone) && !isDragging) {
+    // Pause body rotation during dragging
+    if (isDragging) {
+      // Rotate body slightly to follow drag motion
+    } else if (((hoverState !== 'none' && !isTouchDevice) || activeMilestone)) {
       chestRef.current.rotation.y += 0.1;
     } else {
       chestRef.current.rotation.y += 0.02;
@@ -456,13 +466,16 @@ export const AICoreRobot = () => {
     const targetScale = activeSection === 'hero' ? baseScale : shrinkScale;
     const dragScaleMultiplier = isDragging ? 1.05 : 1.0;
 
-    // Update position and scale smoothly unless actively dragging (in which case we set position instantly)
-    if (!isDragging) {
-      groupRef.current.position.x = THREE.MathUtils.lerp(groupRef.current.position.x, targetX, 0.03);
-      groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, targetY, 0.03);
+    // Update position instantly during drag, and apply 150-200ms ease-out (lerp factor 0.18) upon release
+    if (isDragging) {
+      groupRef.current.position.x = dragPositionRef.current.x;
+      groupRef.current.position.y = dragPositionRef.current.y;
+    } else {
+      groupRef.current.position.x = THREE.MathUtils.lerp(groupRef.current.position.x, targetX, 0.18);
+      groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, targetY, 0.18);
     }
     
-    groupRef.current.scale.setScalar(THREE.MathUtils.lerp(groupRef.current.scale.x, targetScale * dragScaleMultiplier, 0.08));
+    groupRef.current.scale.setScalar(THREE.MathUtils.lerp(groupRef.current.scale.x, targetScale * dragScaleMultiplier, 0.15));
     
     if (idleGroupRef.current) {
       idleGroupRef.current.position.y = idleY;
@@ -517,6 +530,15 @@ export const AICoreRobot = () => {
       x: worldX - groupRef.current!.position.x,
       y: worldY - groupRef.current!.position.y
     };
+
+    // Initialize drag position refs with current position
+    dragPositionRef.current = { x: groupRef.current!.position.x, y: groupRef.current!.position.y };
+    
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const screenX = ((groupRef.current!.position.x / (viewport.width / 2)) + 1) / 2 * width;
+    const screenY = (-(groupRef.current!.position.y / (viewport.height / 2)) + 1) / 2 * height;
+    dragScreenPositionRef.current = { x: screenX, y: screenY };
 
     if (!isTouchDevice) document.body.style.cursor = 'grabbing';
   };
