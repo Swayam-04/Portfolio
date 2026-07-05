@@ -177,7 +177,7 @@ export const AICoreRobot = () => {
 
   const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
 
-  // Restore position from localStorage on load
+  // Restore position from localStorage on load (without forcing followGuide to false)
   useEffect(() => {
     const saved = localStorage.getItem('ai-guide-pos');
     if (saved) {
@@ -185,14 +185,13 @@ export const AICoreRobot = () => {
         const parsed = JSON.parse(saved);
         if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
           setCustomPosition(parsed);
-          setFollowGuide(false);
           dragScreenPositionRef.current = parsed;
         }
       } catch (e) {
         console.error("Failed to parse saved robot position", e);
       }
     }
-  }, [setCustomPosition, setFollowGuide]);
+  }, [setCustomPosition]);
 
   // Pointer move & release window event handlers when dragging
   useEffect(() => {
