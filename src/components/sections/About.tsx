@@ -26,7 +26,7 @@ export const About = () => {
             <div className="aspect-[4/5] rounded-3xl overflow-hidden border border-white/10 relative group">
               <div className="absolute inset-0 bg-gradient-to-t from-background to-transparent z-10" />
               <img
-                src="/public/image/Photo.jpeg"
+                src="/image/Photo.jpeg"
                 alt="Swayam Barik"
                 className="w-full h-full object-cover object-[60%_80%] transition-transform duration-700 group-hover:scale-105"
               />
