@@ -1,11 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '../lib/supabase';
 import { useRobotStore } from '../store/useRobotStore';
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-
-const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
 export const useAnalytics = () => {
   const { setVisitorCount } = useRobotStore();
@@ -25,12 +20,19 @@ export const useAnalytics = () => {
         return;
       }
 
-      let vid = localStorage.getItem('ai_visitor_id');
+      let vid = localStorage.getItem('visitor_id');
       if (!vid) {
-        vid = 'vid_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-        localStorage.setItem('ai_visitor_id', vid);
+        // Generate persistent visitor ID using crypto.randomUUID()
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+          vid = crypto.randomUUID();
+        } else {
+          // Fallback if randomUUID is not supported in old browsers
+          vid = 'vid_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        }
+        localStorage.setItem('visitor_id', vid);
       }
 
+      // Check if visitor exists in database
       const { data: existing, error: selectError } = await supabase
         .from('visitors')
         .select('last_visit, visit_count')
@@ -45,31 +47,32 @@ export const useAnalytics = () => {
       const ONE_DAY = 24 * 60 * 60 * 1000;
 
       if (!existing) {
+        // Insert new visitor
         const { error: insertError } = await supabase
           .from('visitors')
           .insert({
             visitor_id: vid,
             first_visit: new Date().toISOString(),
             last_visit: new Date().toISOString(),
-            visit_count: 1,
-            user_agent: navigator.userAgent
+            visit_count: 1
           });
         if (insertError) throw insertError;
       } else {
+        // Update visit count if last visit was > 24 hours ago
         const lastVisitTime = new Date(existing.last_visit).getTime();
         if (now - lastVisitTime > ONE_DAY) {
           const { error: updateError } = await supabase
             .from('visitors')
             .update({
               last_visit: new Date().toISOString(),
-              visit_count: (existing.visit_count || 1) + 1,
-              user_agent: navigator.userAgent
+              visit_count: (existing.visit_count || 1) + 1
             })
             .eq('visitor_id', vid);
           if (updateError) throw updateError;
         }
       }
 
+      // Fetch sum of all visit_count columns once for initial load
       const { data: countData, error: sumError } = await supabase
         .from('visitors')
         .select('visit_count');
@@ -99,6 +102,7 @@ export const useAnalytics = () => {
         console.error('Visitor Analytics Tracking Error:', err);
         if (mounted) {
           setStatus('error');
+          // Automatically retry in 30 seconds
           timer = setTimeout(runTrackingFlow, 30000);
         }
       }
@@ -112,6 +116,7 @@ export const useAnalytics = () => {
     };
   }, [setVisitorCount]);
 
+  // Realtime subscription
   useEffect(() => {
     if (!supabase || status !== 'success') return;
 
@@ -149,7 +154,9 @@ export const useAnalytics = () => {
 
     return () => {
       mounted = false;
-      supabase.removeChannel(channel);
+      if (supabase) {
+        supabase.removeChannel(channel);
+      }
     };
   }, [status, setVisitorCount]);
 

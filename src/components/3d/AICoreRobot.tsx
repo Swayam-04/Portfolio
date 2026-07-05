@@ -133,9 +133,9 @@ const VisitorHologram = () => {
               Visitors
             </span>
             <div className="flex items-center gap-2">
-              <span className="text-white font-mono font-bold text-sm tracking-wider tabular-nums leading-none">
+              <span className="text-white font-mono font-bold text-xs md:text-sm tracking-wider tabular-nums leading-none whitespace-nowrap">
                 {status === 'loading' && 'Loading...'}
-                {status === 'error' && 'Unavailable'}
+                {status === 'error' && 'Visitor count unavailable'}
                 {status === 'success' && visitorCount.toLocaleString()}
               </span>
               {isOnline && status === 'success' && (
