@@ -15,6 +15,7 @@ import { JourneyBlog } from "./components/sections/JourneyBlog";
 import { Contact } from "./components/sections/Contact";
 import { GlobalCanvas } from "./components/3d/GlobalCanvas";
 import { SpeechBubbleOverlay } from "./components/ui/SpeechBubbleOverlay";
+import { AIControlsOverlay } from "./components/ui/AIControlsOverlay";
 
 function App() {
   useEffect(() => {
@@ -45,6 +46,7 @@ function App() {
     <div className="bg-background min-h-screen text-text selection:bg-primary/30">
       <GlobalCanvas />
       <SpeechBubbleOverlay />
+      <AIControlsOverlay />
       <Navbar />
       
       <main className="flex flex-col gap-16 md:gap-24 pb-24">

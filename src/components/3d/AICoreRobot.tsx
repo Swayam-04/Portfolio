@@ -147,7 +147,11 @@ const VisitorHologram = () => {
 };
 
 export const AICoreRobot = () => {
-  const { hoverState, activeSection, clickCount, isBooting, setBooting, incrementClick, activeMilestone, onRobotArrived, scrollLock } = useRobotStore();
+  const { 
+    hoverState, activeSection, clickCount, isBooting, setBooting, 
+    incrementClick, activeMilestone, onRobotArrived, scrollLock,
+    followGuide, setFollowGuide, customPosition, setCustomPosition
+  } = useRobotStore();
   
   const groupRef = useRef<THREE.Group>(null);
   const idleGroupRef = useRef<THREE.Group>(null);
@@ -156,16 +160,148 @@ export const AICoreRobot = () => {
   const chestRef = useRef<THREE.Mesh>(null);
   const rightArmRef = useRef<THREE.Group>(null);
   const leftArmRef = useRef<THREE.Group>(null);
-  const { viewport } = useThree();
+  
+  const { viewport, camera } = useThree();
   const prevPos = useRef(new THREE.Vector3());
   const velocity = useRef(new THREE.Vector3());
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   
-  // Track speech requests to allow re-triggering and prevent double firing
   const lastProcessedSpeechRequest = useRef(0);
-
-  // Boot Sequence (Level 10)
   const [bootProgress, setBootProgress] = useState(0);
+
+  // Dragging local state
+  const [isDragging, setIsDragging] = useState(false);
+  const dragOffset = useRef({ x: 0, y: 0 });
+
+  const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+
+  // Restore position from localStorage on load
+  useEffect(() => {
+    const saved = localStorage.getItem('ai-guide-pos');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+          setCustomPosition(parsed);
+          setFollowGuide(false);
+        }
+      } catch (e) {
+        console.error("Failed to parse saved robot position", e);
+      }
+    }
+  }, [setCustomPosition, setFollowGuide]);
+
+  // Pointer move & release window event handlers when dragging
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handlePointerMove = (e: PointerEvent) => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+
+      // Project client pointer coordinates to normalized device coordinates (NDC)
+      const ndcX = (e.clientX / width) * 2 - 1;
+      const ndcY = -(e.clientY / height) * 2 + 1;
+
+      // Map to world coordinates minus initial offset
+      const worldX = (ndcX * viewport.width) / 2 - dragOffset.current.x;
+      const worldY = (ndcY * viewport.height) / 2 - dragOffset.current.y;
+
+      // Safe boundaries padding (Desktop: 20px, Mobile: 12px)
+      const isMobile = width < 768;
+      const padding = isMobile ? 12 : 20;
+      
+      const marginX = (padding / width) * viewport.width + 0.3;
+      const marginY = (padding / height) * viewport.height + 0.3;
+
+      const clampedX = Math.max(-(viewport.width / 2) + marginX, Math.min((viewport.width / 2) - marginX, worldX));
+      const clampedY = Math.max(-(viewport.height / 2) + marginY, Math.min((viewport.height / 2) - marginY, worldY));
+
+      // Calculate screen pixel coordinates to save to localStorage
+      const screenX = ((clampedX / (viewport.width / 2)) + 1) / 2 * width;
+      const screenY = (-(clampedY / (viewport.height / 2)) + 1) / 2 * height;
+
+      const newPos = { x: screenX, y: screenY };
+      setCustomPosition(newPos);
+      localStorage.setItem('ai-guide-pos', JSON.stringify(newPos));
+
+      if (e.cancelable) {
+        e.preventDefault();
+      }
+    };
+
+    const handlePointerUp = () => {
+      setIsDragging(false);
+      if (!isTouchDevice) document.body.style.cursor = 'grab';
+    };
+
+    window.addEventListener('pointermove', handlePointerMove, { passive: false });
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [isDragging, viewport.width, viewport.height, setCustomPosition]);
+
+  // Prevent default touch gestures from scrolling the page on mobile while touch dragging
+  useEffect(() => {
+    if (!isDragging) return;
+    const preventScroll = (e: TouchEvent) => {
+      if (e.cancelable) e.preventDefault();
+    };
+    window.addEventListener('touchmove', preventScroll, { passive: false });
+    return () => {
+      window.removeEventListener('touchmove', preventScroll);
+    };
+  }, [isDragging]);
+
+  // Keyboard accessibility arrow key movement handler
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+
+      e.preventDefault();
+      setFollowGuide(false);
+
+      const step = e.shiftKey ? 30 : 10; // Screen pixel steps
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const isMobile = width < 768;
+
+      let currentScreenX = width - 80;
+      let currentScreenY = height - 120;
+
+      const store = useRobotStore.getState();
+      if (store.customPosition) {
+        currentScreenX = store.customPosition.x;
+        currentScreenY = store.customPosition.y;
+      }
+
+      let nextScreenX = currentScreenX;
+      let nextScreenY = currentScreenY;
+
+      switch (e.key) {
+        case 'ArrowUp': nextScreenY -= step; break;
+        case 'ArrowDown': nextScreenY += step; break;
+        case 'ArrowLeft': nextScreenX -= step; break;
+        case 'ArrowRight': nextScreenX += step; break;
+      }
+
+      const padding = isMobile ? 12 : 20;
+      nextScreenX = Math.max(padding + 40, Math.min(width - padding - 40, nextScreenX));
+      nextScreenY = Math.max(padding + 40, Math.min(height - padding - 40, nextScreenY));
+
+      const newPos = { x: nextScreenX, y: nextScreenY };
+      setCustomPosition(newPos);
+      localStorage.setItem('ai-guide-pos', JSON.stringify(newPos));
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [setFollowGuide, setCustomPosition]);
+
+  // Boot sequence
   useEffect(() => {
     if (isBooting) {
       let t = 0;
@@ -180,7 +316,7 @@ export const AICoreRobot = () => {
     }
   }, [isBooting, setBooting]);
 
-  // Track if page has scrolled past hero top area for mobile position transition
+  // Track scroll position for mobile transition
   const [hasScrolled, setHasScrolled] = useState(false);
   useEffect(() => {
     const handleScroll = () => {
@@ -191,26 +327,23 @@ export const AICoreRobot = () => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Section Color mapping
   const getChestColor = () => {
     switch(activeSection) {
-      case 'hero': return '#00E5FF'; // Blue
-      case 'about': return '#7C3AED'; // Purple
-      case 'skills': return '#10B981'; // Green
-      case 'projects': return '#F59E0B'; // Gold
-      case 'awards': return '#FFD700'; // Pure Gold
-      case 'journey': return '#EC4899'; // Pink
-      case 'contact': return '#06B6D4'; // Cyan
+      case 'hero': return '#00E5FF';
+      case 'about': return '#7C3AED';
+      case 'skills': return '#10B981';
+      case 'projects': return '#F59E0B';
+      case 'awards': return '#FFD700';
+      case 'journey': return '#EC4899';
+      case 'contact': return '#06B6D4';
       default: return '#00E5FF';
     }
   };
 
-  const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
-
-  // React Spring Physics for smooth posture transitions (Disable scale-up hover on touch screens)
+  // spring scale (disable scale hover triggers on touch devices)
   const { chestColor, scale } = useSpring({
     chestColor: activeMilestone ? '#FFD700' : getChestColor(),
-    scale: (hoverState !== 'none' && !isTouchDevice) ? 1.1 : 1,
+    scale: (hoverState !== 'none' && !isTouchDevice && !isDragging) ? 1.1 : 1,
     config: { mass: 2, tension: 150, friction: 20 }
   });
 
@@ -218,7 +351,6 @@ export const AICoreRobot = () => {
     if (!groupRef.current || !headRef.current || !chestRef.current) return;
     const time = clock.getElapsedTime();
 
-    // Booting constraints
     if (isBooting) {
       headRef.current.rotation.x = Math.PI / 4 - (bootProgress * Math.PI / 4);
       return;
@@ -228,45 +360,39 @@ export const AICoreRobot = () => {
     const isMobile = width < 768;
     const isTablet = width >= 768 && width < 1024;
 
-    // Level 1: Idle System (Reduce amplitude on mobile to optimize performance and prevent distracting motion)
-    const idleAmplitude = isMobile ? 0.04 : 0.1;
+    // Idle amplitude - reduce on mobile/drag
+    const idleAmplitude = (isMobile || isDragging) ? 0.02 : 0.1;
     const idleY = Math.sin(time * 1.5) * idleAmplitude;
-    const idleSway = Math.sin(time * 1) * (isMobile ? 0.02 : 0.05);
+    const idleSway = Math.sin(time * 1) * ((isMobile || isDragging) ? 0.01 : 0.05);
     
-    // Easter Egg: 360 Spin on Double Click (Level 12)
     const spinTarget = (clickCount % 2 === 0 && clickCount > 0) ? Math.PI * 2 : 0;
 
-    // Level 2: Cursor Tracking (Smooth Interpolation - Disable on mobile/touch screens)
-    const targetRotY = isMobile ? idleSway + spinTarget : (pointer.x * 0.8) + idleSway + spinTarget;
-    const targetRotX = isMobile ? 0 : -(pointer.y * 0.8);
+    // Head tracking - disable on mobile or during drag
+    const targetRotY = (isMobile || isDragging) ? idleSway + spinTarget : (pointer.x * 0.8) + idleSway + spinTarget;
+    const targetRotX = (isMobile || isDragging) ? 0 : -(pointer.y * 0.8);
     
     headRef.current.rotation.y = THREE.MathUtils.lerp(headRef.current.rotation.y, targetRotY, 0.1);
     headRef.current.rotation.x = THREE.MathUtils.lerp(headRef.current.rotation.x, targetRotX, 0.1);
-    
-    // Body follows slightly
     groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, targetRotY * 0.3, 0.05);
     
-    // Chest Breathing
     const breath = 1 + Math.sin(time * 3) * 0.02;
     chestRef.current.scale.set(breath, breath, breath);
     
-    // Spin faster when interacting or celebrating
-    if ((hoverState !== 'none' && !isTouchDevice) || activeMilestone) {
+    if (((hoverState !== 'none' && !isTouchDevice) || activeMilestone) && !isDragging) {
       chestRef.current.rotation.y += 0.1;
     } else {
       chestRef.current.rotation.y += 0.02;
     }
 
-    // Smart IK Gestures based on hover state (Keep disabled on touch screens)
     let targetRightArmZ = 0;
     let targetRightArmX = 0;
     let targetHeadNod = 0;
 
-    if (hoverState !== 'none' && hoverState !== 'resume' && hoverState !== 'contact' && !isTouchDevice) {
+    if (hoverState !== 'none' && hoverState !== 'resume' && hoverState !== 'contact' && !isTouchDevice && !isDragging) {
       targetRightArmX = -Math.PI / 2;
-    } else if (hoverState === 'contact' && !isTouchDevice) {
+    } else if (hoverState === 'contact' && !isTouchDevice && !isDragging) {
       targetRightArmZ = Math.sin(time * 10) * 0.5 - 1; 
-    } else if (hoverState === 'resume' && !isTouchDevice) {
+    } else if (hoverState === 'resume' && !isTouchDevice && !isDragging) {
       targetHeadNod = Math.sin(time * 10) * 0.2; 
     }
 
@@ -276,7 +402,7 @@ export const AICoreRobot = () => {
     }
     headRef.current.rotation.x += targetHeadNod;
 
-    // Strict Responsive Positioning
+    // Positioning
     let targetX = 0;
     let targetY = 0;
     
@@ -284,91 +410,121 @@ export const AICoreRobot = () => {
     const rightEdge = (viewport.width / 2) - offset;
     const leftEdge = -(viewport.width / 2) + offset;
 
-    if (isMobile) {
-      if (activeSection === 'hero' && !hasScrolled) {
-        // Center-bottom in Hero section
-        targetX = 0;
-        targetY = -(viewport.height / 2) + 1.2;
-      } else {
-        // Bottom right corner
-        targetX = rightEdge;
-        targetY = -(viewport.height / 2) + 1.0;
-        
-        // ScollLock nudge - gently floats slightly left/up when heading clicked
-        if (scrollLock) {
-          targetX -= 0.4;
-          targetY += 0.4;
-        }
-      }
+    // If followGuide is false and user saved a custom position, use it
+    if (!followGuide && customPosition) {
+      targetX = ((customPosition.x / width) * 2 - 1) * (viewport.width / 2);
+      targetY = (-(customPosition.y / window.innerHeight) * 2 + 1) * (viewport.height / 2);
     } else {
-      targetY = 0; 
-      switch (activeSection) {
-        case 'about': case 'experience': case 'journey': case 'awards': case 'resume':
-          targetX = leftEdge;
-          break;
-        default:
+      // Default positioning
+      if (isMobile) {
+        if (activeSection === 'hero' && !hasScrolled) {
+          targetX = 0;
+          targetY = -(viewport.height / 2) + 1.2;
+        } else {
           targetX = rightEdge;
-          break;
+          targetY = -(viewport.height / 2) + 1.0;
+          if (scrollLock) {
+            targetX -= 0.4;
+            targetY += 0.4;
+          }
+        }
+      } else {
+        targetY = 0; 
+        switch (activeSection) {
+          case 'about': case 'experience': case 'journey': case 'awards': case 'resume':
+            targetX = leftEdge;
+            break;
+          default:
+            targetX = rightEdge;
+            break;
+        }
       }
     }
 
-    // Calculate responsive scaling
+    // Scale calculations
     let baseScale = 1.0;
     let shrinkScale = 0.48;
 
     if (isMobile) {
-      baseScale = 0.45; // ~45% size in hero
-      shrinkScale = 0.192; // ~40% of desktop guide size (0.48)
+      baseScale = 0.45;
+      shrinkScale = 0.192;
     } else if (isTablet) {
       baseScale = 0.65;
-      shrinkScale = 0.312; // ~65% of desktop guide size (0.48)
+      shrinkScale = 0.312;
     }
 
     const targetScale = activeSection === 'hero' ? baseScale : shrinkScale;
+    const dragScaleMultiplier = isDragging ? 1.05 : 1.0;
+
+    // Update position and scale smoothly unless actively dragging (in which case we set position instantly)
+    if (!isDragging) {
+      groupRef.current.position.x = THREE.MathUtils.lerp(groupRef.current.position.x, targetX, 0.03);
+      groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, targetY, 0.03);
+    }
     
-    // Strict lerp for base position (no idleY)
-    groupRef.current.position.x = THREE.MathUtils.lerp(groupRef.current.position.x, targetX, 0.03);
-    groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, targetY, 0.03);
-    groupRef.current.scale.setScalar(THREE.MathUtils.lerp(groupRef.current.scale.x, targetScale, 0.05));
+    groupRef.current.scale.setScalar(THREE.MathUtils.lerp(groupRef.current.scale.x, targetScale * dragScaleMultiplier, 0.08));
     
-    // Apply idle animation to child group
     if (idleGroupRef.current) {
       idleGroupRef.current.position.y = idleY;
     }
     
-    // Copy base position to unscaled bubble anchor
     if (bubbleAnchorRef.current) {
       bubbleAnchorRef.current.position.copy(groupRef.current.position);
     }
+
+    // Direct projection of 3D robot coordinates to 2D screen pixels for speech bubble CSS tracking
+    const tempV = new THREE.Vector3();
+    groupRef.current.getWorldPosition(tempV);
+    tempV.project(camera);
+    
+    const sX = (tempV.x * 0.5 + 0.5) * width;
+    const sY = (tempV.y * -0.5 + 0.5) * window.innerHeight;
+    
+    document.documentElement.style.setProperty('--robot-x', `${sX}px`);
+    document.documentElement.style.setProperty('--robot-y', `${sY}px`);
 
     velocity.current.set(
       groupRef.current.position.x - prevPos.current.x,
       groupRef.current.position.y - prevPos.current.y,
       0
     );
-    groupRef.current.rotation.z = THREE.MathUtils.lerp(groupRef.current.rotation.z, -velocity.current.x * 5, 0.1);
+
+    // Apply tilt physics (rotate slightly while moving/dragging, limit to 3-5 degrees ~ 0.08 radians)
+    const targetTilt = Math.max(-0.08, Math.min(0.08, -velocity.current.x * (isDragging ? 12 : 5)));
+    groupRef.current.rotation.z = THREE.MathUtils.lerp(groupRef.current.rotation.z, targetTilt, 0.1);
     
     prevPos.current.copy(groupRef.current.position);
 
-    // Track movement state for the engine
     const dist = Math.hypot(targetX - groupRef.current.position.x, targetY - groupRef.current.position.y);
     const state = useRobotStore.getState();
     
     if (dist <= 0.1 && lastProcessedSpeechRequest.current !== state.speechRequestId) {
       lastProcessedSpeechRequest.current = state.speechRequestId;
-      console.log(`[STAGE 4] Robot Arrived at section: ${state.activeSection}`);
       onRobotArrived(state.activeSection);
-    } else if (dist > 0.1 && lastProcessedSpeechRequest.current !== state.speechRequestId) {
-      if (Math.random() < 0.05) console.log(`[STAGE 3] Robot Moving to section: ${state.activeSection}`);
     }
   });
 
-  const handlePointerDown = () => {
-    // Optional interactions
+  const handlePointerDown = (e: any) => {
+    e.stopPropagation();
+    setIsDragging(true);
+    setFollowGuide(false);
+
+    // Project NDC pointer to world coordinates to find offset
+    const worldX = (e.pointer.x * viewport.width) / 2;
+    const worldY = (e.pointer.y * viewport.height) / 2;
+    
+    dragOffset.current = {
+      x: worldX - groupRef.current!.position.x,
+      y: worldY - groupRef.current!.position.y
+    };
+
+    if (!isTouchDevice) document.body.style.cursor = 'grabbing';
   };
 
   const handlePointerUp = () => {
     if (pressTimer.current) clearTimeout(pressTimer.current);
+    setIsDragging(false);
+    if (!isTouchDevice) document.body.style.cursor = 'grab';
   };
 
   const handleDoubleClick = (e: any) => {
@@ -379,7 +535,6 @@ export const AICoreRobot = () => {
     e.stopPropagation();
     incrementClick();
     
-    // Toggle bubble visibility on tap/click
     const store = useRobotStore.getState();
     if (store.bubbleVisible) {
       store.hideBubble();
@@ -398,7 +553,7 @@ export const AICoreRobot = () => {
         onPointerLeave={handlePointerUp}
         onDoubleClick={handleDoubleClick}
         onClick={handleClick}
-        onPointerOver={() => { if (!isTouchDevice) document.body.style.cursor = 'pointer'; }}
+        onPointerOver={() => { if (!isTouchDevice) document.body.style.cursor = 'grab'; }}
         onPointerOut={() => { if (!isTouchDevice) document.body.style.cursor = 'auto'; }}
       >
         <ambientLight intensity={1.8} />

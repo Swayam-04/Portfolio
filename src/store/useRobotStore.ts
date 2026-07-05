@@ -35,6 +35,13 @@ interface RobotStore {
   forceSection: (section: Section) => void;
   setVisitorCount: (count: number) => void;
   triggerMilestone: (milestone: number) => void;
+
+  // Draggable Settings
+  followGuide: boolean;
+  customPosition: { x: number; y: number } | null;
+  setFollowGuide: (val: boolean) => void;
+  setCustomPosition: (pos: { x: number; y: number } | null) => void;
+  resetPosition: () => void;
 }
 
 export const GUIDE_TEXT: Record<Section, string> = {
@@ -126,5 +133,11 @@ export const useRobotStore = create<RobotStore>((set) => ({
     setTimeout(() => {
       set({ activeMilestone: null });
     }, 5000);
-  }
+  },
+
+  followGuide: true,
+  customPosition: null,
+  setFollowGuide: (val) => set({ followGuide: val }),
+  setCustomPosition: (pos) => set({ customPosition: pos }),
+  resetPosition: () => set({ followGuide: true, customPosition: null })
 }));

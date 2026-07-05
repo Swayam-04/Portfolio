@@ -2,10 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useRobotStore } from '../../store/useRobotStore';
 
 export const SpeechBubbleOverlay = () => {
-  const { bubbleVisible, bubbleText, speechId, hideBubble, activeSection } = useRobotStore();
-  
-  // Calculate which side of the screen the robot is on based on the active section
-  const isRightEdge = !['about', 'experience', 'journey', 'awards', 'resume'].includes(activeSection);
+  const { bubbleVisible, bubbleText, speechId, hideBubble } = useRobotStore();
+  const containerRef = useRef<HTMLDivElement>(null);
   
   const [displayedText, setDisplayedText] = useState("");
   const typeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -16,16 +14,13 @@ export const SpeechBubbleOverlay = () => {
     if (dismissTimeoutRef.current) clearTimeout(dismissTimeoutRef.current);
 
     if (!bubbleVisible || !bubbleText) {
-      console.log(`[STAGE 9] Bubble Render: Hidden`);
       setDisplayedText("");
       return;
     }
 
-    console.log(`[STAGE 6] Bubble Render: Visible, preparing text...`);
     let currentString = "";
     let i = 0;
     
-    console.log(`[STAGE 7] Typing Animation Started (speechId: ${speechId})`);
     typeIntervalRef.current = setInterval(() => {
       try {
         if (i < bubbleText.length) {
@@ -33,9 +28,7 @@ export const SpeechBubbleOverlay = () => {
           setDisplayedText(currentString);
           i++;
         } else {
-          console.log(`[STAGE 8] Typing Animation Finished (speechId: ${speechId})`);
           if (typeIntervalRef.current) clearInterval(typeIntervalRef.current);
-          
           dismissTimeoutRef.current = setTimeout(() => {
             hideBubble();
           }, 5000);
@@ -61,7 +54,6 @@ export const SpeechBubbleOverlay = () => {
     const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
       if (useRobotStore.getState().bubbleVisible) {
         const target = e.target as HTMLElement;
-        // Don't close immediately if clicking the Canvas (which manages robot click)
         if (target.tagName !== 'CANVAS') {
           hideBubble();
         }
@@ -77,20 +69,107 @@ export const SpeechBubbleOverlay = () => {
     };
   }, [hideBubble]);
 
+  // Direct positioning and flip evaluation via requestAnimationFrame
+  useEffect(() => {
+    let active = true;
+
+    const updateBubblePosition = () => {
+      if (!active) return;
+      const el = containerRef.current;
+      if (el) {
+        const xStr = document.documentElement.style.getPropertyValue('--robot-x');
+        const yStr = document.documentElement.style.getPropertyValue('--robot-y');
+
+        if (xStr && yStr) {
+          const rx = parseFloat(xStr);
+          const ry = parseFloat(yStr);
+
+          const width = window.innerWidth;
+          const height = window.innerHeight;
+
+          // Determine placement based on available screen space
+          let placement = 'top';
+
+          const spaceRight = width - rx;
+          const spaceLeft = rx;
+          const spaceTop = ry;
+          const spaceBottom = height - ry;
+
+          // Flip evaluations: Priority Top, Right, Left, Bottom
+          if (spaceTop > 180) {
+            placement = 'top';
+          } else if (spaceRight > 320) {
+            placement = 'right';
+          } else if (spaceLeft > 320) {
+            placement = 'left';
+          } else if (spaceBottom > 180) {
+            placement = 'bottom';
+          } else {
+            placement = spaceTop > spaceBottom ? 'top' : 'bottom';
+          }
+
+          let tx = '-50%';
+          let ty = '-50%';
+
+          if (placement === 'right') {
+            tx = '40px';
+            ty = '-50%';
+          } else if (placement === 'left') {
+            tx = 'calc(-100% - 40px)';
+            ty = '-50%';
+          } else if (placement === 'top') {
+            tx = '-50%';
+            ty = 'calc(-100% - 80px)';
+          } else if (placement === 'bottom') {
+            tx = '-50%';
+            ty = '80px';
+          }
+
+          el.style.left = `${rx}px`;
+          el.style.top = `${ry}px`;
+          el.style.transform = `translate(${tx}, ${ty})`;
+
+          // Update arrow indicators
+          const arrowL = el.querySelector('.arrow-l') as HTMLElement;
+          const arrowR = el.querySelector('.arrow-r') as HTMLElement;
+          const arrowT = el.querySelector('.arrow-t') as HTMLElement;
+          const arrowB = el.querySelector('.arrow-b') as HTMLElement;
+
+          if (arrowL) arrowL.style.display = placement === 'right' ? 'block' : 'none';
+          if (arrowR) arrowR.style.display = placement === 'left' ? 'block' : 'none';
+          if (arrowT) arrowT.style.display = placement === 'top' ? 'block' : 'none';
+          if (arrowB) arrowB.style.display = placement === 'bottom' ? 'block' : 'none';
+        }
+      }
+      requestAnimationFrame(updateBubblePosition);
+    };
+
+    requestAnimationFrame(updateBubblePosition);
+    return () => {
+      active = false;
+    };
+  }, []);
+
   return (
     <div 
-      className={`fixed z-[9999] pointer-events-none transition-all duration-500 
-      ${bubbleVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-95'} 
-      md:top-1/2 md:-translate-y-1/2 md:bottom-auto
-      ${isRightEdge ? 'md:right-[15vw] md:left-auto' : 'md:left-[15vw] md:right-auto'}
-      bottom-[120px] right-[16px] max-w-[70vw] md:max-w-[300px]`}
+      ref={containerRef}
+      className={`fixed z-[9999] pointer-events-none transition-opacity duration-300
+      ${bubbleVisible ? 'opacity-100' : 'opacity-0 scale-95'}`}
     >
-      <div className="pointer-events-auto relative bg-black/80 backdrop-blur-xl border border-primary/40 text-white p-4 rounded-[20px] text-[14px] md:text-[16px] font-medium leading-relaxed shadow-[0_0_40px_rgba(0,229,255,0.2)] w-max max-w-full max-h-[120px] md:max-h-none overflow-y-auto md:overflow-visible">
+      <div className="pointer-events-auto relative bg-black/80 backdrop-blur-xl border border-primary/40 text-white p-4 rounded-[20px] text-[14px] md:text-[16px] font-medium leading-relaxed shadow-[0_0_40px_rgba(0,229,255,0.2)] w-max max-w-[70vw] md:max-w-[300px] max-h-[120px] md:max-h-[200px] overflow-y-auto select-none">
         {displayedText}
-        {/* Desktop Arrow */}
-        <div className={`hidden md:block absolute top-1/2 -translate-y-1/2 w-0 h-0 border-y-8 border-y-transparent ${isRightEdge ? '-right-3 border-l-[12px] border-l-black/80' : '-left-3 border-r-[12px] border-r-black/80'}`} />
-        {/* Mobile Arrow */}
-        <div className="block md:hidden absolute -bottom-3 right-6 w-0 h-0 border-x-8 border-x-transparent border-t-[12px] border-t-black/80" />
+        
+        {/* Right Arrow (Bubble is to the right, arrow on left) */}
+        <div className="arrow-l absolute top-1/2 -translate-y-1/2 -left-3 w-0 h-0 border-y-8 border-y-transparent border-r-[12px] border-r-black/80" />
+        
+        {/* Left Arrow (Bubble is to the left, arrow on right) */}
+        <div className="arrow-r absolute top-1/2 -translate-y-1/2 -right-3 w-0 h-0 border-y-8 border-y-transparent border-l-[12px] border-l-black/80" />
+        
+        {/* Top Arrow (Bubble is above, arrow on bottom) */}
+        <div className="arrow-t absolute -bottom-3 left-1/2 -translate-x-1/2 w-0 h-0 border-x-8 border-x-transparent border-t-[12px] border-t-black/80" />
+        
+        {/* Bottom Arrow (Bubble is below, arrow on top) */}
+        <div className="arrow-b absolute -top-3 left-1/2 -translate-x-1/2 w-0 h-0 border-x-8 border-x-transparent border-b-[12px] border-b-black/80" />
       </div>
     </div>
   );
