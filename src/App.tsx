@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import Lenis from "@studio-freight/lenis";
+import { Analytics } from "@vercel/analytics/react";
 
 import { Navbar } from "./components/layout/Navbar";
 import { Footer } from "./components/layout/Footer";
@@ -63,6 +64,7 @@ function App() {
       </main>
 
       <Footer />
+      <Analytics />
     </div>
   );
 }
